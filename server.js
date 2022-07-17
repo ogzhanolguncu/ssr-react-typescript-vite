@@ -4,10 +4,7 @@ import { fileURLToPath } from 'url'
 import express from 'express'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-
-const isTest = process.env.NODE_ENV === 'test' || !!process.env.VITE_TEST_BUILD
-
-process.env.MY_CUSTOM_SECRET = 'API_KEY_qwertyuiop'
+const app = express()
 
 export async function createServer(
   root = process.cwd(),
@@ -16,37 +13,21 @@ export async function createServer(
 ) {
   const resolve = (p) => path.resolve(__dirname, p)
 
-  const indexProd = isProd
-    ? fs.readFileSync(resolve('dist/client/index.html'), 'utf-8')
-    : ''
-
-  const app = express()
-
-  /**
-   * @type {import('vite').ViteDevServer}
-   */
-  let vite
+  let vite = null
   if (!isProd) {
     vite = await (
       await import('vite')
     ).createServer({
       root,
-      logLevel: isTest ? 'error' : 'info',
+      logLevel: 'info',
       server: {
         middlewareMode: true,
-        watch: {
-          // During tests we edit the files too fast and sometimes chokidar
-          // misses change events, so enforce polling for consistency
-          usePolling: true,
-          interval: 100
-        },
         hmr: {
           port: hmrPort
         }
       },
       appType: 'custom'
     })
-    // use vite's connect instance as middleware
     app.use(vite.middlewares)
   } else {
     app.use((await import('compression')).default())
@@ -58,46 +39,28 @@ export async function createServer(
   }
 
   app.use('*', async (req, res) => {
-    try {
-      const url = req.originalUrl
-
-      let template, render
-      if (!isProd) {
-        // always read fresh template in dev
-        template = fs.readFileSync(resolve('index.html'), 'utf-8')
-        template = await vite.transformIndexHtml(url, template)
-        render = (await vite.ssrLoadModule('/src/entry-server.tsx')).SSRRender
-      } else {
-        template = indexProd
-        // @ts-ignore
-        render = (await import('./dist/server/entry-server.js')).SSRRender
-      }
-
-      const context = {}
-      const appHtml = render(url, context)
-
-      if (context.url) {
-        // Somewhere a `<Redirect>` was rendered
-        return res.redirect(301, context.url)
-      }
-
-      const html = template.replace(`<!--app-html-->`, appHtml)
-
-      res.status(200).set({ 'Content-Type': 'text/html' }).end(html)
-    } catch (e) {
-      !isProd && vite.ssrFixStacktrace(e)
-      console.log(e.stack)
-      res.status(500).end(e.stack)
+    const url = '/'
+    let template, render
+    if (!isProd && vite) {
+      template = fs.readFileSync(resolve('index.html'), 'utf-8')
+      template = await vite.transformIndexHtml(url, template) // Inserting react-refresh for local development
+      render = (await vite.ssrLoadModule('/src/entry-server.tsx')).SSRRender
+    } else {
+      template = fs.readFileSync(resolve('dist/client/index.html'), 'utf-8')
+      render = (await import('./dist/server/entry-server.js')).SSRRender
     }
+
+    const appHtml = render(url) //Rendering component without any client side logic de-hydrated like a dry sponge
+    const html = template.replace(`<!--app-html-->`, appHtml) //Replacing placeholder with SSR rendered components
+
+    res.status(200).set({ 'Content-Type': 'text/html' }).end(html) //Outputing final html
   })
 
   return { app, vite }
 }
 
-if (!isTest) {
-  createServer().then(({ app }) =>
-    app.listen(5173, () => {
-      console.log('http://localhost:5173')
-    })
-  )
-}
+createServer().then(({ app }) =>
+  app.listen(5173, () => {
+    console.log('http://localhost:5173')
+  })
+)
