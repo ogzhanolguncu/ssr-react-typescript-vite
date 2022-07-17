@@ -70,7 +70,7 @@ export async function createServer(
       } else {
         template = indexProd
         // @ts-ignore
-        render = (await import('./dist/server/entry-server.tsx')).SSRRender
+        render = (await import('./dist/server/entry-server.js')).SSRRender
       }
 
       const context = {}
